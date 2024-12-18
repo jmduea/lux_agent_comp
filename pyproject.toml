@@ -1,0 +1,14 @@
+[project]
+name = "lux-agent-comp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "ipykernel>=6.29.5",
+    "ipywidgets>=8.1.5",
+    "luxai-s3>=0.1.0",
+    "ray[all]>=2.40.0",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+]
