@@ -27,6 +27,13 @@ from pathfinding import (
 
 
 class Node:
+    """
+    Represents a node on a grid with coordinates (x, y). A node can have various types
+    and properties such as energy, visibility, relics, and rewards. It supports operations
+    for updating its relic and reward status and provides utilities for comparison and
+    distance calculations.
+    """
+
     def __init__(self, x, y):
         self.x = x
         self.y = y
@@ -101,6 +108,59 @@ class Node:
 
 
 class Space:
+    """
+    Represents a 2D grid space where each cell is a node that can contain relics, rewards,
+    and other properties. The space is symmetrical and supports operations for updating
+    the status of nodes, shifting obstacles, and tracking relic and reward discoveries.
+
+    Attributes
+    ----------
+        _nodes (list[list[Node]]):
+            A list of lists representing the grid of nodes.
+        _relic_nodes (set[Node]):
+            A set of nodes that contain relics.
+        _reward_nodes (set[Node]):
+            A set of nodes that provide rewards.
+
+    Methods:
+        __repr__:
+            Returns a string representation of the space.
+        __iter__:
+            Allows iteration over all nodes in the space.
+        relic_nodes:
+            Returns the set of nodes with relics.
+        reward_nodes:
+            Returns the set of nodes with rewards.
+        get_node:
+            Retrieves the node at given coordinates.
+        update:
+            Updates the space based on observations and team data.
+        _update_relic_map:
+            Updates the relic map based on observations.
+        _update_reward_status_from_reward_results:
+            Updates reward status from results.
+        _update_reward_results:
+            Updates reward results from observations.
+        _update_reward_status_from_relics_distribution:
+            Updates reward status based on relic distribution.
+        _update_relic_status:
+            Updates the relic status of a node.
+        _update_reward_status:
+            Updates the reward status of a node.
+        _update_map:
+            Updates the map based on observations.
+        _find_obstacle_movement_period:
+            Finds the period of obstacle movement.
+        _find_obstacle_movement_direction:
+            Finds the direction of obstacle movement.
+        clear:
+            Clears visibility of all nodes.
+        move_obstacles:
+            Moves obstacles based on the current step.
+        move:
+            Moves the nodes in the space by a given offset.
+    """
+
     def __init__(self):
         self._nodes: list[list[Node]] = []
         for y in range(SPACE_SIZE):
@@ -403,6 +463,31 @@ class Space:
 
 
 class Ship:
+    """
+    Represents a ship with a unique unit ID that can perform various tasks,
+    such as moving, sapping, or targeting enemies. The ship maintains its
+    energy level, position, and a list of potential sap targets within range.
+
+    Attributes
+    ----------
+    unit_id (int):
+        Unique identifier for the ship.
+    starting_position (tuple[int, int] | None):
+        The initial coordinates of the ship.
+    energy (int):
+        Current energy level of the ship.
+    node (Node | None):
+        Current node representing the ship's position.
+    task (str | None):
+        Current task assigned to the ship.
+    target (Node | None):
+        Current target node for the ship.
+    action (ActionType | None):
+        Current action the ship is performing.
+    sap_targets (list[Ship]):
+        List of enemy ships within sap range.
+    """
+
     def __init__(self, unit_id: int):
         self.unit_id = unit_id
         self.starting_position: tuple[int, int] | None = None
@@ -463,6 +548,10 @@ class Ship:
 
 
 class Fleet:
+    """
+    A fleet is a collection of ships on the board that are on the same team.
+    """
+
     def __init__(self, team_id):
         self.team_id: int = team_id
         self.points: int = 0  # how many points have we scored in this match so far
@@ -502,6 +591,54 @@ class Fleet:
 
 
 class Agent:
+    """
+    The AI agent that controls a team of ships.
+
+    The agent makes decisions based on the current state of the game, which is
+    represented by the `Space` object. The agent uses the `Space` object to
+    determine the positions of the ships, the energy levels of the nodes, and
+    the positions of the obstacles.
+
+    The agent makes decisions by calling the `act` method, which takes the
+    current state of the game and returns an array of actions, where each action
+    is represented as a triplet: (action_type, x_offset, y_offset).
+
+    The agent also has methods for finding relics, finding rewards, and
+    harvesting energy.
+
+    The agent keeps track of the current state of the game, including the
+    positions of the ships, the energy levels of the nodes, and the positions of
+    the obstacles.
+
+    The agent also has methods for showing the visible energy field, the
+    explored energy field, the visible map, the explored map, and the exploration
+    map.
+
+    Parameters
+    ----------
+    player : str
+        The player name.
+    env_cfg : dict
+        The environment configuration.
+
+    Attributes
+    ----------
+    player : str
+        The player name.
+    team_id : int
+        The team id.
+    opp_team_id : int
+        The opponent team id.
+    env_cfg : dict
+        The environment configuration.
+    space : Space
+        The game state.
+    fleet : Fleet
+        The fleet of ships.
+    opp_fleet : Fleet
+        The opponent fleet of ships.
+    """
+
     def __init__(self, player: str, env_cfg) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
