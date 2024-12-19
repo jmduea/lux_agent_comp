@@ -30,6 +30,7 @@
             "logToFile": true
         },
         {
+<<<<<<< HEAD
             "name": "Evaluate DQN Agents",
             "type": "debugpy",
             "request": "launch",
@@ -40,6 +41,8 @@
             "logToFile": true
         },
         {
+=======
+>>>>>>> parent of ad09784 (Delete .vscode directory)
             "name": "Python Debugger: Python File",
             "type": "debugpy",
             "request": "launch",
