@@ -3,38 +3,16 @@ name = "lux-agent-comp"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = "==3.12.*"
+requires-python = ">= 3.10"
+authors = [{ name = "Jon Duea", email = "jdueadev@gmail.com" }]
 dependencies = [
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.5",
     "luxai-s3>=0.1.0",
+    "numpy>=2.2.0",
+    "matplotlib>=3.10.0",
+    "seaborn>=0.13.2",
+    "tensorboardx>=2.6.2.2",
+    "gymnasium>=1.0.0",
     "ray[all]>=2.40.0",
-    "torch>=2.5.1",
-    "torchvision>=0.20.1",
 ]
-
-[project.optional-dependencies]
-cpu = ["torch>=2.5.1", "torchvision>=0.20.1"]
-cu124 = ["torch>=2.5.1", "torchvision>=0.20.1"]
-
-[tool.uv]
-conflicts = [[{ extra = "cpu" }, { extra = "cu124" }]]
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu", extra = "cpu", marker = "platform_system != 'Darwin'" },
-    { index = "pytorch-cu124", extra = "cu124" },
-]
-torchvision = [
-    { index = "pytorch-cpu", extra = "cpu", marker = "platform_system != 'Darwin'" },
-    { index = "pytorch-cu124", extra = "cu124" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true

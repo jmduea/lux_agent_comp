@@ -15,3 +15,6 @@ wheels/
 
 # windsurf rules
 .windsurfrules
+
+saved_agents/q_learning_agent/logs
+/replays

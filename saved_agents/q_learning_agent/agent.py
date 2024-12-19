@@ -669,7 +669,7 @@ class Agent:
         action_size = len(ActionType)  # Number of possible actions
         self.dqn_agent = DQNAgent(state_size, action_size, self.player, self.env_cfg)
 
-    def _calculate_state_size(self) -> int:
+    def _calculate_state_size(self):
         """
         Calculate the size of the state space with enhanced features.
         Features per ship:
@@ -701,8 +701,8 @@ class Agent:
         Returns:
             int: Size of the state space
         """
-        # Global features
-        global_features = SPACE_SIZE * SPACE_SIZE * 5  # 5 full maps
+        # Global features (5 maps of 24x24)
+        global_features = 5 * 24 * 24  # 2880 features
 
         # Per ship features
         per_ship_features = (
@@ -718,9 +718,13 @@ class Agent:
             + 3  # task encoding
             + 1  # nearby enemies
             + 1  # energy efficiency
-        )
+        )  # 140 features
 
-        return global_features + (per_ship_features * Global.MAX_UNITS)
+        total_size = global_features + per_ship_features
+        print(
+            f"Total state size: {total_size} (Global: {global_features}, Per ship: {per_ship_features})"
+        )
+        return total_size
 
     def _encode_state(self, ship: Ship, obs) -> dict:
         """
@@ -760,7 +764,10 @@ class Agent:
             if enemy_ship.node and enemy_ship.node.is_visible:
                 ex, ey = enemy_ship.coordinates
                 void_strength = (
-                    enemy_ship.energy * self.env_cfg["unit_energy_void_factor"]
+                    enemy_ship.energy
+                    * self.env_cfg.get(
+                        "unit_energy_void_factor", 0.25
+                    )  # Use default value of 0.25 if not specified
                 )
                 for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                     nx, ny = ex + dx, ey + dy
@@ -902,7 +909,10 @@ class Agent:
             # Get state features for this ship
             state_dict = self._encode_state(ship, obs)
 
-            # Convert state dict to tensor
+            # Make a copy of the state dict for replay buffer
+            replay_state = copy.deepcopy(state_dict)
+
+            # Convert state dict to tensor for forward pass
             state_tensor = {
                 "global_features": {
                     k: torch.from_numpy(v).float().to(self.dqn_agent.device)
@@ -941,27 +951,24 @@ class Agent:
                         best_target = target
 
                 if best_target:
-                    tx, ty = best_target.coordinates()
-                    sx, sy = ship.coordinates()
+                    tx, ty = best_target.coordinates
+                    sx, sy = ship.coordinates
                     actions[ship.unit_id] = [5, tx - sx, ty - sy]
 
             # Store transition in replay buffer if we have previous state
             if ship.unit_id in self.prev_state and ship.unit_id in self.prev_action:
                 reward = self._calculate_reward(ship, action_type)
-                self.dqn_agent.memory.push(
+                self.dqn_agent.train(
                     self.prev_state[ship.unit_id],
                     self.prev_action[ship.unit_id],
                     reward,
-                    state_dict,
+                    replay_state,
                     False,  # done
                 )
 
             # Store current state and action for next step
-            self.prev_state[ship.unit_id] = state_dict
+            self.prev_state[ship.unit_id] = replay_state
             self.prev_action[ship.unit_id] = action_type
-
-            # Train the network
-            self.dqn_agent.train()
 
         return actions
 
@@ -1243,19 +1250,31 @@ class Agent:
     def save_model(self):
         """Save the DQN model"""
         try:
-            model_path = os.path.join(self.models_dir, "dqn_agent.pth")
+            model_dir = os.path.join(os.path.dirname(__file__), "models")
+            os.makedirs(model_dir, exist_ok=True)
+            model_path = os.path.join(model_dir, "dqn_agent.pth")
             self.dqn_agent.save(model_path)
         except Exception as e:
             print(f"Error saving model: {e}", file=stderr)
 
     def load_model(self):
         """Load the DQN model if it exists"""
-        try:
-            model_path = os.path.join(self.models_dir, "dqn_agent.pth")
-            if os.path.exists(model_path):
-                self.dqn_agent.load(model_path)
-        except Exception as e:
-            print(f"Error loading model: {e}", file=stderr)
+        if self.dqn_agent is None:
+            self.dqn_agent = DQNAgent(expert=self)
+
+        # For inference, move model to CPU if GPU is not available
+        if not torch.cuda.is_available():
+            self.dqn_agent.to_device(torch.device("cpu"))
+
+        # Load model weights if they exist
+        model_path = os.path.join(os.path.dirname(__file__), "dqn_model.pth")
+        if os.path.exists(model_path):
+            try:
+                state_dict = torch.load(model_path, map_location=self.dqn_agent.device)
+                self.dqn_agent.load_state_dict(state_dict)
+                print(f"Loaded DQN model from {model_path}")
+            except Exception as e:
+                print(f"Error loading model: {e}")
 
     def show_visible_energy_field(self):
         print("Visible energy field:", file=stderr)
