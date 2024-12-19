@@ -122,8 +122,7 @@ class Space:
         _reward_nodes (set[Node]):
             A set of nodes that provide rewards.
 
-    Methods
-    -------
+    Methods:
         __repr__:
             Returns a string representation of the space.
         __iter__:
