@@ -30,6 +30,16 @@
             "logToFile": true
         },
         {
+            "name": "Evaluate DQN Agents",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/evaluate_dqn_agents.py",
+            "console": "integratedTerminal",
+            "args": [],
+            "justMyCode": true,
+            "logToFile": true
+        },
+        {
             "name": "Python Debugger: Python File",
             "type": "debugpy",
             "request": "launch",
