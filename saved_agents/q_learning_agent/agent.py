@@ -1,7 +1,9 @@
 import copy
+import os
 from sys import stderr
 
 import numpy as np
+import torch
 from scipy.signal import convolve2d
 
 from base import (
@@ -24,6 +26,8 @@ from pathfinding import (
     nearby_positions,
     path_to_actions,
 )
+
+from .dqn_model import DQNAgent
 
 
 class Node:
@@ -122,7 +126,8 @@ class Space:
         _reward_nodes (set[Node]):
             A set of nodes that provide rewards.
 
-    Methods:
+    Methods
+    -------
         __repr__:
             Returns a string representation of the space.
         __iter__:
@@ -640,6 +645,10 @@ class Agent:
     """
 
     def __init__(self, player: str, env_cfg) -> None:
+        # Create models directory if it doesn't exist
+        self.models_dir = os.path.join(os.path.dirname(__file__), "models")
+        if not os.path.exists(self.models_dir):
+            os.makedirs(self.models_dir)
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         self.team_id = 0 if self.player == "player_0" else 1
@@ -656,80 +665,357 @@ class Agent:
         self.fleet = Fleet(self.team_id)
         self.opp_fleet = Fleet(self.opp_team_id)
 
+        state_size = self._calculate_state_size()
+        action_size = len(ActionType)  # Number of possible actions
+        self.dqn_agent = DQNAgent(state_size, action_size, self.player, self.env_cfg)
+
+    def _calculate_state_size(self) -> int:
+        """
+        Calculate the size of the state space with enhanced features.
+        Features per ship:
+        Global Features (shared across all ships):
+        - Energy field map (24x24): 576
+        - Nebula effect map (24x24): 576
+        - Void field map (24x24): 576
+        - Relic memory map (24x24): 576
+        - Visibility mask (24x24): 576
+
+        Per Ship Features:
+        - Position (x, y): 2
+        - Energy level: 1
+        - Node type one-hot (empty, asteroid, nebula): 3
+        - Local energy field (5x5): 25
+        - Local nebula effect (5x5): 25
+        - Local void field (5x5): 25
+        - Local relic memory (5x5): 25
+        - Local visibility (5x5): 25
+        - Distance features:
+            - To nearest relic: 1
+            - To nearest reward: 1
+            - To nearest enemy: 1
+            - To nearest high energy: 1
+        - Task encoding (one-hot): 3
+        - Number of nearby enemies: 1
+        - Current energy efficiency: 1
+
+        Returns:
+            int: Size of the state space
+        """
+        # Global features
+        global_features = SPACE_SIZE * SPACE_SIZE * 5  # 5 full maps
+
+        # Per ship features
+        per_ship_features = (
+            2  # position
+            + 1  # energy
+            + 3  # node type one-hot
+            + 25  # local energy field
+            + 25  # local nebula effect
+            + 25  # local void field
+            + 25  # local relic memory
+            + 25  # local visibility
+            + 4  # distance features
+            + 3  # task encoding
+            + 1  # nearby enemies
+            + 1  # energy efficiency
+        )
+
+        return global_features + (per_ship_features * Global.MAX_UNITS)
+
+    def _encode_state(self, ship: Ship, obs) -> dict:
+        """
+        Encode the state for a specific ship with enhanced features.
+
+        Args:
+            ship: The ship to encode state for
+            obs: Current observation
+
+        Returns:
+            dict: Encoded state features
+        """
+        # Get ship position and create local view window
+        x, y = ship.coordinates if ship.node else (-1, -1)
+        local_window = 2  # Results in 5x5 window
+
+        # Global feature maps
+        energy_map = np.zeros((SPACE_SIZE, SPACE_SIZE))
+        nebula_map = np.zeros((SPACE_SIZE, SPACE_SIZE))
+        void_map = np.zeros((SPACE_SIZE, SPACE_SIZE))
+        relic_map = np.zeros((SPACE_SIZE, SPACE_SIZE))
+        visibility_map = np.zeros((SPACE_SIZE, SPACE_SIZE))
+
+        # Fill global maps
+        for node in self.space:
+            if node.is_visible:
+                energy_map[node.y, node.x] = (
+                    node.energy if node.energy is not None else 0
+                )
+                nebula_map[node.y, node.x] = 1 if node.type == NodeType.nebula else 0
+                visibility_map[node.y, node.x] = 1
+                if node.relic:
+                    relic_map[node.y, node.x] = 1
+
+        # Calculate void field from enemy ships
+        for enemy_ship in self.opp_fleet:
+            if enemy_ship.node and enemy_ship.node.is_visible:
+                ex, ey = enemy_ship.coordinates
+                void_strength = (
+                    enemy_ship.energy * self.env_cfg["unit_energy_void_factor"]
+                )
+                for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+                    nx, ny = ex + dx, ey + dy
+                    if 0 <= nx < SPACE_SIZE and 0 <= ny < SPACE_SIZE:
+                        void_map[ny, nx] = max(void_map[ny, nx], void_strength)
+
+        # Extract local windows
+        local_energy = self._extract_local_window(energy_map, x, y, local_window)
+        local_nebula = self._extract_local_window(nebula_map, x, y, local_window)
+        local_void = self._extract_local_window(void_map, x, y, local_window)
+        local_relic = self._extract_local_window(relic_map, x, y, local_window)
+        local_visibility = self._extract_local_window(
+            visibility_map, x, y, local_window
+        )
+
+        # Calculate distance features
+        nearest_relic = float("inf")
+        nearest_reward = float("inf")
+        nearest_enemy = float("inf")
+        nearest_high_energy = float("inf")
+
+        if ship.node:
+            for node in self.space:
+                if node.relic:
+                    nearest_relic = min(
+                        nearest_relic, ship.node.manhattan_distance(node)
+                    )
+                if node.reward:
+                    nearest_reward = min(
+                        nearest_reward, ship.node.manhattan_distance(node)
+                    )
+                if node.energy and node.energy > 50:  # Threshold for "high energy"
+                    nearest_high_energy = min(
+                        nearest_high_energy, ship.node.manhattan_distance(node)
+                    )
+
+            for enemy in self.opp_fleet:
+                if enemy.node:
+                    nearest_enemy = min(
+                        nearest_enemy, ship.node.manhattan_distance(enemy.node)
+                    )
+
+        # Normalize distances
+        max_distance = SPACE_SIZE * 2
+        nearest_relic = min(nearest_relic, max_distance) / max_distance
+        nearest_reward = min(nearest_reward, max_distance) / max_distance
+        nearest_enemy = min(nearest_enemy, max_distance) / max_distance
+        nearest_high_energy = min(nearest_high_energy, max_distance) / max_distance
+
+        # Calculate energy efficiency
+        energy_efficiency = ship.energy / 100 if ship.energy > 0 else 0
+
+        # Count nearby enemies
+        nearby_enemies = sum(1 for target in ship.sap_targets if target.energy > 0)
+
+        # Encode current task
+        task_encoding = [0, 0, 0]
+        if ship.task == "find_relics":
+            task_encoding[0] = 1
+        elif ship.task == "find_rewards":
+            task_encoding[1] = 1
+        elif ship.task == "harvest":
+            task_encoding[2] = 1
+
+        # Node type one-hot encoding
+        node_type = [0, 0, 0]  # [empty, asteroid, nebula]
+        if ship.node:
+            if ship.node.type == NodeType.empty:
+                node_type[0] = 1
+            elif ship.node.type == NodeType.asteroid:
+                node_type[1] = 1
+            elif ship.node.type == NodeType.nebula:
+                node_type[2] = 1
+
+        return {
+            "global_features": {
+                "energy_map": energy_map.flatten(),
+                "nebula_map": nebula_map.flatten(),
+                "void_map": void_map.flatten(),
+                "relic_map": relic_map.flatten(),
+                "visibility_map": visibility_map.flatten(),
+            },
+            "ship_features": {
+                "position": [x / SPACE_SIZE, y / SPACE_SIZE],
+                "energy": ship.energy / 100,
+                "node_type": node_type,
+                "local_energy": local_energy.flatten(),
+                "local_nebula": local_nebula.flatten(),
+                "local_void": local_void.flatten(),
+                "local_relic": local_relic.flatten(),
+                "local_visibility": local_visibility.flatten(),
+                "distances": [
+                    nearest_relic,
+                    nearest_reward,
+                    nearest_enemy,
+                    nearest_high_energy,
+                ],
+                "task": task_encoding,
+                "nearby_enemies": nearby_enemies / Global.MAX_UNITS,
+                "energy_efficiency": energy_efficiency,
+            },
+        }
+
+    def _extract_local_window(self, global_map, center_x, center_y, window_size):
+        """Extract a local window from a global map with zero padding"""
+        local = np.zeros((2 * window_size + 1, 2 * window_size + 1))
+        for dy in range(-window_size, window_size + 1):
+            for dx in range(-window_size, window_size + 1):
+                x, y = center_x + dx, center_y + dy
+                if 0 <= x < SPACE_SIZE and 0 <= y < SPACE_SIZE:
+                    local[dy + window_size, dx + window_size] = global_map[y, x]
+        return local
+
     def act(self, step: int, obs, remainingOverageTime: int = 60):
         match_step = get_match_step(step)
 
-        print(f"start step={match_step}({step})", file=stderr)
-
         if match_step == 0:
-            # nothing to do here at the beginning of the match
-            # just need to clean up some of the garbage that was left after the previous match
             self.fleet.clear()
             self.opp_fleet.clear()
             self.space.clear()
             self.space.move_obstacles(step)
-            return self.create_actions_array()
+            self.load_model()
+            self.prev_state = {}
+            self.prev_action = {}
 
-        points = int(obs["team_points"][self.team_id])
-
-        # how many points did we score in the last step
-        reward = max(0, points - self.fleet.points)
-
-        self.space.update(step, obs, self.team_id, reward)
-        self.opp_fleet.update(obs, self.space, self.fleet)
+        # Update game state
+        self.space.update(step, obs, self.team_id, self.fleet.points)
         self.fleet.update(obs, self.space, self.opp_fleet)
+        self.opp_fleet.update(obs, self.space, self.fleet)
 
-        # if match_step == 100:
-        #     breakpoint()
-        # self.show_visible_map()
+        # Create actions array
+        actions = self.create_actions_array()
 
-        self.find_relics()
-        self.find_rewards()
-        self.harvest()
-
+        # Get actions for each ship using DQN
         for ship in self.fleet:
-            try:
-                print(f"{ship}, {ship.task}, {ship.target}, {ship.action}", file=stderr)
-            except Exception as e:
-                print(f"Error logging ship details: {e}", file=stderr)
+            if ship.node is None:
+                continue
 
-        return self.create_actions_array()
+            # Get state features for this ship
+            state_dict = self._encode_state(ship, obs)
+
+            # Convert state dict to tensor
+            state_tensor = {
+                "global_features": {
+                    k: torch.from_numpy(v).float().to(self.dqn_agent.device)
+                    for k, v in state_dict["global_features"].items()
+                },
+                "ship_features": {
+                    k: torch.from_numpy(v).float().to(self.dqn_agent.device)
+                    if isinstance(v, np.ndarray)
+                    else torch.tensor(v, dtype=torch.float32).to(self.dqn_agent.device)
+                    for k, v in state_dict["ship_features"].items()
+                },
+            }
+
+            # Get Q-values and select action
+            with torch.no_grad():
+                q_values = self.dqn_agent.forward(state_tensor)
+
+                # Epsilon-greedy action selection
+                if np.random.random() < self.dqn_agent.epsilon:
+                    action_type = np.random.randint(0, 6)
+                else:
+                    action_type = q_values.argmax().item()
+
+            # Convert action type to game action
+            if action_type == 0:  # No action
+                continue
+            elif action_type <= 4:  # Movement actions
+                actions[ship.unit_id] = [action_type, 0, 0]
+            else:  # Sap action
+                # Find best sap target
+                best_target = None
+                max_energy = 0
+                for target in ship.sap_targets:
+                    if target.energy > max_energy:
+                        max_energy = target.energy
+                        best_target = target
+
+                if best_target:
+                    tx, ty = best_target.coordinates()
+                    sx, sy = ship.coordinates()
+                    actions[ship.unit_id] = [5, tx - sx, ty - sy]
+
+            # Store transition in replay buffer if we have previous state
+            if ship.unit_id in self.prev_state and ship.unit_id in self.prev_action:
+                reward = self._calculate_reward(ship, action_type)
+                self.dqn_agent.memory.push(
+                    self.prev_state[ship.unit_id],
+                    self.prev_action[ship.unit_id],
+                    reward,
+                    state_dict,
+                    False,  # done
+                )
+
+            # Store current state and action for next step
+            self.prev_state[ship.unit_id] = state_dict
+            self.prev_action[ship.unit_id] = action_type
+
+            # Train the network
+            self.dqn_agent.train()
+
+        return actions
+
+    def _calculate_reward(self, ship, action):
+        """Calculate reward for the given ship and action"""
+        reward = 0
+
+        # Reward for gaining points
+        if ship.node and ship.node.reward:
+            reward += 10
+
+        # Reward for finding new relic tiles
+        if ship.node and ship.node.relic and not ship.node.explored_for_relic:
+            reward += 5
+
+        # Penalty for low energy
+        if ship.energy < 20:
+            reward -= 2
+
+        # Reward for efficient energy management
+        if (
+            ship.energy > ship.energy and action <= 4
+        ):  # Movement action with energy gain
+            reward += 1
+
+        # Penalty for invalid sap attempts
+        if action == 5 and not ship.sap_targets:
+            reward -= 1
+
+        # Reward for successful sap
+        if action == 5 and ship.sap_targets:
+            reward += 3
+
+        return reward
 
     def create_actions_array(self):
-        """
-        Create an array of actions for each ship in the fleet.
-        Each action is represented as a triplet: (action_type, x_offset, y_offset).
-
-        - If a ship's current action is ActionType.center and it has sap targets,
-          it will sap the target with the lowest energy if it has enough energy to do so.
-        - If a ship is exploring (i.e., its task is neither "harvest" nor "find_rewards")
-          and it finds sap targets, it will sap the target with the lowest energy if it can
-          afford it without running out of energy.
-        - Otherwise, the ship performs its current action with no offset.
-
-        Returns:
-            numpy.ndarray: An array where each row corresponds to the action of a ship.
-        """
         ships = self.fleet.ships
         actions = np.zeros((len(ships), 3), dtype=int)
 
         for i, ship in enumerate(ships):
-            if ship.action is not None:
-                if (
-                    ship.action == ActionType.center
-                    and len(ship.sap_targets) > 0
-                    and ship.energy > Global.UNIT_SAP_COST
-                    and (
-                        ship.node.energy >= 0
-                        or ship.energy + ship.node.energy - Global.UNIT_SAP_COST > 0
-                    )
-                ):
-                    lowest_energy_target = ship.lowest_energy_target
-                    coordinates = lowest_energy_target.coordinates
-                    x, y = coordinates[0] - ship.node.x, coordinates[1] - ship.node.y
-                    actions[i] = ActionType.sap, x, y
-                else:
-                    actions[i] = ship.action, 0, 0
+            if ship.action is None:
+                actions[i] = ActionType.center, 0, 0
+                continue
+
+            # For sap action we need coordinates
+            if ship.action == ActionType.sap and len(ship.sap_targets) > 0:
+                lowest_energy_target = ship.lowest_energy_target
+                coordinates = lowest_energy_target.coordinates
+                x, y = coordinates[0] - ship.node.x, coordinates[1] - ship.node.y
+                actions[i] = ActionType.sap, x, y
+            elif ship.action == ActionType.sap and len(ship.sap_targets) == 0:
+                actions[i] = ActionType.center, 0, 0
+            else:
+                actions[i] = ship.action, 0, 0
 
         return actions
 
@@ -953,6 +1239,23 @@ class Agent:
             else:
                 ship.task = None
                 ship.target = None
+
+    def save_model(self):
+        """Save the DQN model"""
+        try:
+            model_path = os.path.join(self.models_dir, "dqn_agent.pth")
+            self.dqn_agent.save(model_path)
+        except Exception as e:
+            print(f"Error saving model: {e}", file=stderr)
+
+    def load_model(self):
+        """Load the DQN model if it exists"""
+        try:
+            model_path = os.path.join(self.models_dir, "dqn_agent.pth")
+            if os.path.exists(model_path):
+                self.dqn_agent.load(model_path)
+        except Exception as e:
+            print(f"Error loading model: {e}", file=stderr)
 
     def show_visible_energy_field(self):
         print("Visible energy field:", file=stderr)
