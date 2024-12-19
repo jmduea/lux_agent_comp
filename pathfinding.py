@@ -1,4 +1,3 @@
-
 import heapq
 import numpy as np
 
@@ -7,46 +6,156 @@ from base import SPACE_SIZE, NodeType, Global, ActionType
 CARDINAL_DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
 
-def astar(weights, start, goal):
-    # A* algorithm
-    # returns the shortest path form start to goal
+class State:
+    NEW = 0
+    OPEN = 1
+    CLOSED = 2
+    RAISED = 3
+    LOWER = 4
+
+
+class DStarNode:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.state = State.NEW
+        self.h = float("inf")  # Cost-to-goal estimate
+        self.k = float("inf")  # Minimum of old h and new h
+        self.parent = None
+
+
+def dstar(weights, start, goal):
+    # D* algorithm implementation
+    # Returns the shortest path from start to goal
 
     min_weight = weights[np.where(weights >= 0)].min()
+    nodes = {}
+    open_list = []
 
-    def heuristic(p1, p2):
-        return min_weight * manhattan_distance(p1, p2)
+    def get_node(pos):
+        if pos not in nodes:
+            nodes[pos] = DStarNode(pos[0], pos[1])
+        return nodes[pos]
 
-    queue = []
+    def process_state():
+        if not open_list:
+            return -1
 
-    # nodes: [x, y, (parent.x, parent.y, distance, f)]
-    nodes = np.zeros((*weights.shape, 4), dtype=np.float32)
-    nodes[:] = -1
+        k_old = get_k_min()
+        node = get_node(heapq.heappop(open_list)[2])
 
-    heapq.heappush(queue, (0, start))
-    nodes[start[0], start[1], :] = (*start, 0, heuristic(start, goal))
+        if node.state == State.CLOSED:
+            return k_old
 
-    while queue:
-        f, (x, y) = heapq.heappop(queue)
+        if k_old < node.h:
+            for neighbor_pos in get_neighbors(node.x, node.y):
+                neighbor = get_node(neighbor_pos)
+                if neighbor.h <= k_old and node.h > neighbor.h + get_cost(
+                    neighbor_pos, (node.x, node.y)
+                ):
+                    node.parent = neighbor_pos
+                    node.h = neighbor.h + get_cost(neighbor_pos, (node.x, node.y))
 
-        if (x, y) == goal:
-            return reconstruct_path(nodes, start, goal)
+        if k_old == node.h:
+            for neighbor_pos in get_neighbors(node.x, node.y):
+                neighbor = get_node(neighbor_pos)
+                if (
+                    neighbor.state == State.NEW
+                    or (
+                        neighbor.parent == (node.x, node.y)
+                        and neighbor.h
+                        != node.h + get_cost((node.x, node.y), neighbor_pos)
+                    )
+                    or (
+                        neighbor.parent != (node.x, node.y)
+                        and neighbor.h
+                        > node.h + get_cost((node.x, node.y), neighbor_pos)
+                    )
+                ):
+                    neighbor.parent = (node.x, node.y)
+                    insert(
+                        neighbor_pos, node.h + get_cost((node.x, node.y), neighbor_pos)
+                    )
+        else:
+            for neighbor_pos in get_neighbors(node.x, node.y):
+                neighbor = get_node(neighbor_pos)
+                if neighbor.state == State.NEW or (
+                    neighbor.parent == (node.x, node.y)
+                    and neighbor.h != node.h + get_cost((node.x, node.y), neighbor_pos)
+                ):
+                    neighbor.parent = (node.x, node.y)
+                    insert(
+                        neighbor_pos, node.h + get_cost((node.x, node.y), neighbor_pos)
+                    )
+                else:
+                    if neighbor.parent != (
+                        node.x,
+                        node.y,
+                    ) and neighbor.h > node.h + get_cost(
+                        (node.x, node.y), neighbor_pos
+                    ):
+                        insert((node.x, node.y), node.h)
+                    else:
+                        if (
+                            neighbor.parent != (node.x, node.y)
+                            and node.h
+                            > neighbor.h + get_cost(neighbor_pos, (node.x, node.y))
+                            and neighbor.state == State.CLOSED
+                            and neighbor.h > k_old
+                        ):
+                            insert(neighbor_pos, neighbor.h)
+        return get_k_min()
 
-        if f > nodes[x, y, 3]:
-            continue
+    def get_k_min():
+        if not open_list:
+            return -1
+        return open_list[0][0]
 
-        distance = nodes[x, y, 2]
-        for x_, y_ in get_neighbors(x, y):
-            cost = weights[y_, x_]
-            if cost < 0:
-                continue
+    def get_cost(pos1, pos2):
+        if weights[pos2[1], pos2[0]] < 0:
+            return float("inf")
+        return weights[pos2[1], pos2[0]]
 
-            new_distance = distance + cost
-            if nodes[x_, y_, 2] < 0 or nodes[x_, y_, 2] > new_distance:
-                new_f = new_distance + heuristic((x_, y_), goal)
-                nodes[x_, y_, :] = x, y, new_distance, new_f
-                heapq.heappush(queue, (new_f, (x_, y_)))
+    def insert(pos, h_new):
+        node = get_node(pos)
+        if node.state == State.NEW:
+            node.k = h_new
+        elif node.state == State.OPEN:
+            node.k = min(node.k, h_new)
+        elif node.state == State.CLOSED:
+            node.k = min(node.h, h_new)
+        node.h = h_new
+        node.state = State.OPEN
+        heapq.heappush(open_list, (node.k, node.h, pos))
 
-    return []
+    # Initialize D*
+    goal_node = get_node(goal)
+    goal_node.h = 0
+    insert(goal, 0)
+
+    while True:
+        k_min = process_state()
+        if k_min == -1:
+            break
+        if get_node(start).state == State.CLOSED:
+            break
+
+    # Reconstruct path
+    if get_node(start).h == float("inf"):
+        return []
+
+    path = []
+    current = start
+    while current != goal:
+        if current is None:
+            return []
+        path.append(current)
+        current_node = get_node(current)
+        if current_node.parent is None:
+            return []
+        current = current_node.parent
+    path.append(goal)
+    return path
 
 
 def manhattan_distance(a, b) -> int:
@@ -84,11 +193,10 @@ def nearby_positions(x, y, distance):
 
 
 def create_weights(space):
-    # create weights for AStar algorithm
+    # create weights for D* algorithm
 
     weights = np.zeros((SPACE_SIZE, SPACE_SIZE), np.float32)
     for node in space:
-
         if not node.is_walkable:
             weight = -1
         else:

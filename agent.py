@@ -16,8 +16,8 @@ from base import (
 )
 from debug import show_energy_field, show_exploration_map, show_map
 from pathfinding import (
-    astar,
     create_weights,
+    dstar,
     estimate_energy_cost,
     find_closest_target,
     manhattan_distance,
@@ -659,7 +659,7 @@ class Agent:
     def act(self, step: int, obs, remainingOverageTime: int = 60):
         match_step = get_match_step(step)
 
-        print(f"start step={match_step}({step})", file=stderr)
+        # print(f"start step={match_step}({step})", file=stderr)
 
         if match_step == 0:
             # nothing to do here at the beginning of the match
@@ -687,11 +687,11 @@ class Agent:
         self.find_rewards()
         self.harvest()
 
-        for ship in self.fleet:
-            try:
-                print(f"{ship}, {ship.task}, {ship.target}, {ship.action}", file=stderr)
-            except Exception as e:
-                print(f"Error logging ship details: {e}", file=stderr)
+        # for ship in self.fleet:
+        #     try:
+        #         print(f"{ship}, {ship.task}, {ship.target}, {ship.action}", file=stderr)
+        #     except Exception as e:
+        #         print(f"Error logging ship details: {e}", file=stderr)
 
         return self.create_actions_array()
 
@@ -716,11 +716,10 @@ class Agent:
         for i, ship in enumerate(ships):
             if ship.action is not None:
                 if (
-                    ship.action == ActionType.center
-                    and len(ship.sap_targets) > 0
+                    len(ship.sap_targets) > 0
                     and ship.energy > Global.UNIT_SAP_COST
                     and (
-                        ship.node.energy >= 0
+                        ship.energy - Global.UNIT_SAP_COST >= 0
                         or ship.energy + ship.node.energy - Global.UNIT_SAP_COST > 0
                     )
                 ):
@@ -730,6 +729,42 @@ class Agent:
                     actions[i] = ActionType.sap, x, y
                 else:
                     actions[i] = ship.action, 0, 0
+            elif ship.node is not None and ship.task is None:
+                # Move units towards relic nodes and sap enemies
+                relic_nodes = [node for node in self.space if node.relic]
+                if relic_nodes:
+                    closest_relic = min(
+                        relic_nodes,
+                        key=lambda n: manhattan_distance(
+                            ship.coordinates, n.coordinates
+                        ),
+                    )
+                    path = dstar(
+                        create_weights(self.space),
+                        ship.coordinates,
+                        closest_relic.coordinates,
+                    )
+                    if path:
+                        next_step = path[1] if len(path) > 1 else path[0]
+                        dx, dy = next_step[0] - ship.node.x, next_step[1] - ship.node.y
+                        move_action = ActionType.from_coordinates(
+                            ship.coordinates, next_step
+                        )
+                        if ship.sap_targets:
+                            lowest_energy_target = ship.lowest_energy_target
+                            tx, ty = (
+                                lowest_energy_target.coordinates[0] - ship.node.x,
+                                lowest_energy_target.coordinates[1] - ship.node.y,
+                            )
+                            actions[i] = ActionType.sap, tx, ty
+                        else:
+                            actions[i] = move_action, 0, 0
+                    else:
+                        actions[i] = ActionType.center, 0, 0
+                else:
+                    actions[i] = ActionType.center, 0, 0
+            else:
+                actions[i] = ActionType.center, 0, 0
 
         return actions
 
@@ -760,7 +795,7 @@ class Agent:
             if not target:
                 return False
 
-            path = astar(create_weights(self.space), ship.coordinates, target)
+            path = dstar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
             if actions and ship.energy >= energy:
@@ -853,7 +888,7 @@ class Agent:
             if not target:
                 return
 
-            path = astar(create_weights(self.space), ship.coordinates, target)
+            path = dstar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
 
@@ -906,7 +941,7 @@ class Agent:
                 ship.action = ActionType.center
                 return True
 
-            path = astar(
+            path = dstar(
                 create_weights(self.space),
                 start=ship.coordinates,
                 goal=target_node.coordinates,

@@ -17,4 +17,6 @@ wheels/
 .windsurfrules
 
 saved_agents/q_learning_agent/logs
+saved_agents/q_learning_agent/training_log_data
+/training_data
 /replays
