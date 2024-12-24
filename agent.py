@@ -16,8 +16,8 @@ from base import (
 )
 from debug import show_energy_field, show_exploration_map, show_map
 from pathfinding import (
+    astar,
     create_weights,
-    dstar,
     estimate_energy_cost,
     find_closest_target,
     manhattan_distance,
@@ -27,13 +27,6 @@ from pathfinding import (
 
 
 class Node:
-    """
-    Represents a node on a grid with coordinates (x, y). A node can have various types
-    and properties such as energy, visibility, relics, and rewards. It supports operations
-    for updating its relic and reward status and provides utilities for comparison and
-    distance calculations.
-    """
-
     def __init__(self, x, y):
         self.x = x
         self.y = y
@@ -108,59 +101,6 @@ class Node:
 
 
 class Space:
-    """
-    Represents a 2D grid space where each cell is a node that can contain relics, rewards,
-    and other properties. The space is symmetrical and supports operations for updating
-    the status of nodes, shifting obstacles, and tracking relic and reward discoveries.
-
-    Attributes
-    ----------
-        _nodes (list[list[Node]]):
-            A list of lists representing the grid of nodes.
-        _relic_nodes (set[Node]):
-            A set of nodes that contain relics.
-        _reward_nodes (set[Node]):
-            A set of nodes that provide rewards.
-
-    Methods:
-        __repr__:
-            Returns a string representation of the space.
-        __iter__:
-            Allows iteration over all nodes in the space.
-        relic_nodes:
-            Returns the set of nodes with relics.
-        reward_nodes:
-            Returns the set of nodes with rewards.
-        get_node:
-            Retrieves the node at given coordinates.
-        update:
-            Updates the space based on observations and team data.
-        _update_relic_map:
-            Updates the relic map based on observations.
-        _update_reward_status_from_reward_results:
-            Updates reward status from results.
-        _update_reward_results:
-            Updates reward results from observations.
-        _update_reward_status_from_relics_distribution:
-            Updates reward status based on relic distribution.
-        _update_relic_status:
-            Updates the relic status of a node.
-        _update_reward_status:
-            Updates the reward status of a node.
-        _update_map:
-            Updates the map based on observations.
-        _find_obstacle_movement_period:
-            Finds the period of obstacle movement.
-        _find_obstacle_movement_direction:
-            Finds the direction of obstacle movement.
-        clear:
-            Clears visibility of all nodes.
-        move_obstacles:
-            Moves obstacles based on the current step.
-        move:
-            Moves the nodes in the space by a given offset.
-    """
-
     def __init__(self):
         self._nodes: list[list[Node]] = []
         for y in range(SPACE_SIZE):
@@ -341,7 +281,7 @@ class Space:
         energy_nodes_shifted = False
         for node in self:
             x, y = node.coordinates
-            is_visible = sensor_mask[x, y]
+            is_visible = sensor_mask[x][y]
 
             if (
                 is_visible
@@ -381,19 +321,19 @@ class Space:
 
         for node in self:
             x, y = node.coordinates
-            is_visible = bool(sensor_mask[x, y])
+            is_visible = bool(sensor_mask[x][y])
 
             node.is_visible = is_visible
 
             if is_visible and node.is_unknown:
-                node.type = NodeType(int(obs_tile_type[x, y]))
+                node.type = NodeType(int(obs_tile_type[x][y]))
 
                 # we can also update the node type on the other side of the map
                 # because the map is symmetrical
                 self.get_node(*get_opposite(x, y)).type = node.type
 
             if is_visible:
-                node.energy = int(obs_energy[x, y])
+                node.energy = int(obs_energy[x][y])
 
                 # the energy field should be symmetrical
                 self.get_node(*get_opposite(x, y)).energy = node.energy
@@ -463,31 +403,6 @@ class Space:
 
 
 class Ship:
-    """
-    Represents a ship with a unique unit ID that can perform various tasks,
-    such as moving, sapping, or targeting enemies. The ship maintains its
-    energy level, position, and a list of potential sap targets within range.
-
-    Attributes
-    ----------
-    unit_id (int):
-        Unique identifier for the ship.
-    starting_position (tuple[int, int] | None):
-        The initial coordinates of the ship.
-    energy (int):
-        Current energy level of the ship.
-    node (Node | None):
-        Current node representing the ship's position.
-    task (str | None):
-        Current task assigned to the ship.
-    target (Node | None):
-        Current target node for the ship.
-    action (ActionType | None):
-        Current action the ship is performing.
-    sap_targets (list[Ship]):
-        List of enemy ships within sap range.
-    """
-
     def __init__(self, unit_id: int):
         self.unit_id = unit_id
         self.starting_position: tuple[int, int] | None = None
@@ -505,10 +420,6 @@ class Ship:
     @property
     def coordinates(self):
         return self.node.coordinates if self.node else None
-
-    @property
-    def lowest_energy_target(self):
-        return min(self.sap_targets, key=lambda x: x.energy)
 
     def clean(self):
         self.energy = 0
@@ -548,10 +459,6 @@ class Ship:
 
 
 class Fleet:
-    """
-    A fleet is a collection of ships on the board that are on the same team.
-    """
-
     def __init__(self, team_id):
         self.team_id: int = team_id
         self.points: int = 0  # how many points have we scored in this match so far
@@ -591,54 +498,6 @@ class Fleet:
 
 
 class Agent:
-    """
-    The AI agent that controls a team of ships.
-
-    The agent makes decisions based on the current state of the game, which is
-    represented by the `Space` object. The agent uses the `Space` object to
-    determine the positions of the ships, the energy levels of the nodes, and
-    the positions of the obstacles.
-
-    The agent makes decisions by calling the `act` method, which takes the
-    current state of the game and returns an array of actions, where each action
-    is represented as a triplet: (action_type, x_offset, y_offset).
-
-    The agent also has methods for finding relics, finding rewards, and
-    harvesting energy.
-
-    The agent keeps track of the current state of the game, including the
-    positions of the ships, the energy levels of the nodes, and the positions of
-    the obstacles.
-
-    The agent also has methods for showing the visible energy field, the
-    explored energy field, the visible map, the explored map, and the exploration
-    map.
-
-    Parameters
-    ----------
-    player : str
-        The player name.
-    env_cfg : dict
-        The environment configuration.
-
-    Attributes
-    ----------
-    player : str
-        The player name.
-    team_id : int
-        The team id.
-    opp_team_id : int
-        The opponent team id.
-    env_cfg : dict
-        The environment configuration.
-    space : Space
-        The game state.
-    fleet : Fleet
-        The fleet of ships.
-    opp_fleet : Fleet
-        The opponent fleet of ships.
-    """
-
     def __init__(self, player: str, env_cfg) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
@@ -688,83 +547,27 @@ class Agent:
         self.harvest()
 
         # for ship in self.fleet:
-        #     try:
-        #         print(f"{ship}, {ship.task}, {ship.target}, {ship.action}", file=stderr)
-        #     except Exception as e:
-        #         print(f"Error logging ship details: {e}", file=stderr)
+        #      print(ship, ship.task, ship.target, ship.action, file=stderr)
 
         return self.create_actions_array()
 
     def create_actions_array(self):
-        """
-        Create an array of actions for each ship in the fleet.
-        Each action is represented as a triplet: (action_type, x_offset, y_offset).
-
-        - If a ship's current action is ActionType.center and it has sap targets,
-          it will sap the target with the lowest energy if it has enough energy to do so.
-        - If a ship is exploring (i.e., its task is neither "harvest" nor "find_rewards")
-          and it finds sap targets, it will sap the target with the lowest energy if it can
-          afford it without running out of energy.
-        - Otherwise, the ship performs its current action with no offset.
-
-        Returns:
-            numpy.ndarray: An array where each row corresponds to the action of a ship.
-        """
         ships = self.fleet.ships
         actions = np.zeros((len(ships), 3), dtype=int)
 
         for i, ship in enumerate(ships):
             if ship.action is not None:
                 if (
-                    len(ship.sap_targets) > 0
+                    ship.action == ActionType.center
+                    and len(ship.sap_targets) > 0
                     and ship.energy > Global.UNIT_SAP_COST
-                    and (
-                        ship.energy - Global.UNIT_SAP_COST >= 0
-                        or ship.energy + ship.node.energy - Global.UNIT_SAP_COST > 0
-                    )
                 ):
-                    lowest_energy_target = ship.lowest_energy_target
+                    lowest_energy_target = min(ship.sap_targets, key=lambda x: x.energy)
                     coordinates = lowest_energy_target.coordinates
                     x, y = coordinates[0] - ship.node.x, coordinates[1] - ship.node.y
                     actions[i] = ActionType.sap, x, y
                 else:
                     actions[i] = ship.action, 0, 0
-            elif ship.node is not None and ship.task is None:
-                # Move units towards relic nodes and sap enemies
-                relic_nodes = [node for node in self.space if node.relic]
-                if relic_nodes:
-                    closest_relic = min(
-                        relic_nodes,
-                        key=lambda n: manhattan_distance(
-                            ship.coordinates, n.coordinates
-                        ),
-                    )
-                    path = dstar(
-                        create_weights(self.space),
-                        ship.coordinates,
-                        closest_relic.coordinates,
-                    )
-                    if path:
-                        next_step = path[1] if len(path) > 1 else path[0]
-                        dx, dy = next_step[0] - ship.node.x, next_step[1] - ship.node.y
-                        move_action = ActionType.from_coordinates(
-                            ship.coordinates, next_step
-                        )
-                        if ship.sap_targets:
-                            lowest_energy_target = ship.lowest_energy_target
-                            tx, ty = (
-                                lowest_energy_target.coordinates[0] - ship.node.x,
-                                lowest_energy_target.coordinates[1] - ship.node.y,
-                            )
-                            actions[i] = ActionType.sap, tx, ty
-                        else:
-                            actions[i] = move_action, 0, 0
-                    else:
-                        actions[i] = ActionType.center, 0, 0
-                else:
-                    actions[i] = ActionType.center, 0, 0
-            else:
-                actions[i] = ActionType.center, 0, 0
 
         return actions
 
@@ -795,7 +598,7 @@ class Agent:
             if not target:
                 return False
 
-            path = dstar(create_weights(self.space), ship.coordinates, target)
+            path = astar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
             if actions and ship.energy >= energy:
@@ -888,7 +691,7 @@ class Agent:
             if not target:
                 return
 
-            path = dstar(create_weights(self.space), ship.coordinates, target)
+            path = astar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
 
@@ -941,7 +744,7 @@ class Agent:
                 ship.action = ActionType.center
                 return True
 
-            path = dstar(
+            path = astar(
                 create_weights(self.space),
                 start=ship.coordinates,
                 goal=target_node.coordinates,

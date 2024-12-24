@@ -2,6 +2,7 @@ import os
 import shutil
 import tarfile
 import sys
+from datetime import datetime
 
 
 def create_submission_package(project_dir, output_filename="submission.tar.gz"):
@@ -27,6 +28,10 @@ def create_submission_package(project_dir, output_filename="submission.tar.gz"):
     submission_dir = os.path.join(project_dir, "submission_temp")
     os.makedirs(submission_dir, exist_ok=True)
 
+    # Create submissions directory if it doesn't exist
+    submissions_dir = os.path.join(project_dir, "submissions")
+    os.makedirs(submissions_dir, exist_ok=True)
+
     try:
         # Copy essential files
         for item in essential_files:
@@ -38,8 +43,10 @@ def create_submission_package(project_dir, output_filename="submission.tar.gz"):
             else:
                 shutil.copy2(src_path, dst_path)
 
-        # Create tar.gz archive
-        output_path = os.path.join(project_dir, output_filename)
+        # Create tar.gz archive with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename_with_timestamp = f"{os.path.splitext(output_filename)[0]}_{timestamp}.tar.gz"
+        output_path = os.path.join(submissions_dir, output_filename_with_timestamp)
         with tarfile.open(output_path, "w:gz") as tar:
             tar.add(submission_dir, arcname=".")
 

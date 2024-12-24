@@ -22,5 +22,5 @@ wheels/
 # training data
 saved_agents/q_learning_agent/logs
 saved_agents/q_learning_agent/training_log_data
-/training_data
 /replays
+/training_data

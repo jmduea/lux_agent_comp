@@ -2,7 +2,6 @@ import copy
 import os
 import random
 from collections import deque
-from sys import stderr
 
 import numpy as np
 import torch
@@ -77,19 +76,37 @@ class ImitationReplayBuffer:
     def __init__(self, capacity):
         self.capacity = capacity
         self.buffer = deque(maxlen=capacity)
-        self.reward_history = deque(maxlen=100)  # Keep track of last 100 rewards for scaling
+        self.reward_history = deque(
+            maxlen=100
+        )  # Keep track of last 100 rewards for scaling
 
     def push(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
         # Extract reward value from dict if needed
         if isinstance(reward, dict):
             if "reward" in reward:
-                reward_value = reward["reward"]
+                reward_value = float(reward["reward"])  # Ensure it's a float
+            elif "nodes" in reward:
+                # Handle the case where reward contains nodes
+                if isinstance(reward["nodes"], (set, list)):
+                    # Use the number of nodes as a reward component
+                    nodes_reward = float(len(reward["nodes"]))
+                    # If there's an explicit reward value, use that too
+                    explicit_reward = float(reward.get("reward", 0))
+                    reward_value = nodes_reward + explicit_reward
+                else:
+                    print(
+                        f"Warning: Unexpected nodes format in reward: {reward}, using 0"
+                    )
+                    reward_value = 0.0
             else:
                 print(f"Warning: Unexpected reward format: {reward}, using 0")
-                reward_value = 0
+                reward_value = 0.0
         else:
-            reward_value = reward
+            reward_value = float(reward)  # Ensure it's a float
+
+        # Clip reward to reasonable range to prevent instability
+        reward_value = max(min(reward_value, 100.0), -100.0)
 
         # Store experience
         self.buffer.append((state, action, reward_value, next_state, done))
@@ -131,8 +148,10 @@ class ImitationReplayBuffer:
             return reward
 
         mean_reward = np.mean(self.reward_history)
-        std_reward = np.std(self.reward_history) + 1e-8  # Add small epsilon to avoid division by zero
-        
+        std_reward = (
+            np.std(self.reward_history) + 1e-8
+        )  # Add small epsilon to avoid division by zero
+
         return (reward - mean_reward) / std_reward
 
 
@@ -151,12 +170,12 @@ class DQNAgent(nn.Module):
         print(f"State size: {state_size}, Action size: {action_size}")  # Debug print
 
         # Training parameters
-        self.batch_size = 32
+        self.batch_size = 64
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
-        self.target_update = 10  # how often to update target network
+        self.target_update = 100  # how often to update target network
 
         # Device setup
         if torch.cuda.is_available():
@@ -203,10 +222,10 @@ class DQNAgent(nn.Module):
             + list(self.advantage_net.parameters())
             + list(self.value_net.parameters())
         )
-        self.optimizer = optim.Adam(params, lr=0.001)
+        self.optimizer = optim.Adam(params, lr=0.005)
 
         # Memory
-        self.memory = ImitationReplayBuffer(10000)
+        self.memory = ImitationReplayBuffer(50000)
 
         # Metrics tracking
         self.total_steps = 0
@@ -276,12 +295,13 @@ class DQNAgent(nn.Module):
 
         return x
 
-    def forward(self, state):
+    def forward(self, state, valid_actions_mask=None):
         """
         Forward pass through the network using Dueling DQN architecture
 
         Args:
             state: Either a state dictionary or a pre-encoded tensor
+            valid_actions_mask: Optional boolean mask for valid actions (batch_size, action_size)
 
         Returns:
             torch.Tensor: Q-values for each action
@@ -302,7 +322,34 @@ class DQNAgent(nn.Module):
 
         # Combine using dueling architecture
         q_values = value + (advantage - advantage.mean(dim=1, keepdim=True))
+
+        # Apply action masking if provided
+        if valid_actions_mask is not None:
+            # Set Q-values of invalid actions to a large negative number
+            invalid_actions_mask = ~valid_actions_mask
+            q_values = q_values.masked_fill(invalid_actions_mask, float("-inf"))
+
         return q_values
+
+    def select_action(self, state, valid_actions_mask=None):
+        """Select action using epsilon-greedy policy with action masking"""
+        if random.random() > self.epsilon:
+            with torch.no_grad():
+                state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+                if valid_actions_mask is not None:
+                    valid_actions_mask = (
+                        torch.FloatTensor(valid_actions_mask)
+                        .unsqueeze(0)
+                        .to(self.device)
+                    )
+                q_values = self(state_tensor, valid_actions_mask)
+                return q_values.argmax().item()
+        else:
+            if valid_actions_mask is not None:
+                # Only select from valid actions during exploration
+                valid_indices = np.where(valid_actions_mask)[0]
+                return np.random.choice(valid_indices)
+            return random.randrange(self.action_size)
 
     def get_state_features(self, fleet, space, opp_fleet):
         """Convert game state to neural network input"""
@@ -314,6 +361,62 @@ class DQNAgent(nn.Module):
                 ship_state = np.zeros(self.state_size)  # padding for inactive ships
             state.append(ship_state)
         return np.concatenate(state)
+
+    def _calculate_state_size(self):
+        """
+        Calculate the size of the state space with enhanced features.
+        Features per ship:
+
+        Ship Features (4):
+        - Energy level (1)
+        - Position x, y (2)
+        - Number of sap targets (1)
+
+        Global Parameters (4):
+        - Unit move cost (1)
+        - Unit sap cost (1)
+        - Unit sensor range (1)
+        - Max units (1)
+
+        Enemy Information (7):
+        - Distance to closest enemy (1)
+        - Energy of closest enemy (1)
+        - Enemy centroid position x, y (2)
+        - Number of visible enemies (1)
+        - Average enemy energy (1)
+        - Total enemy energy (1)
+
+        Local Environment Features per cell in 3x3 grid (6 * 9 = 54):
+        - Is asteroid (1)
+        - Has relic (1)
+        - Has reward (1)
+        - Energy value (1)
+        - Enemy presence (1)
+        - Enemy energy (1)
+
+        Total Features: 4 + 4 + 7 + 54 = 69
+
+        Returns:
+            int: Size of the state space
+        """
+        # Ship features
+        ship_features = 4  # energy, x, y, sap_targets
+
+        # Global parameters
+        global_params = 4  # move_cost, sap_cost, sensor_range, max_units
+
+        # Enemy information
+        enemy_info = 7  # closest_dist, closest_energy, centroid_x, centroid_y, num_visible, avg_energy, total_energy
+
+        # Local environment features (3x3 grid)
+        features_per_cell = (
+            6  # asteroid, relic, reward, energy, enemy_present, enemy_energy
+        )
+        local_grid_size = 9  # 3x3 grid
+        local_features = features_per_cell * local_grid_size
+
+        total_size = ship_features + global_params + enemy_info + local_features
+        return total_size
 
     def _get_ship_features(self, ship, space, fleet, opp_fleet):
         features = []
@@ -336,38 +439,97 @@ class DQNAgent(nn.Module):
                 Global.MAX_UNITS / 16.0,
             ]
         )
-        # Local environment features
+        # Enhanced enemy information
+        closest_enemy_dist = float("inf")
+        closest_enemy_energy = 0
+        enemy_centroid_x = 0
+        enemy_centroid_y = 0
+        num_visible_enemies = 0
+        total_enemy_energy = 0
+
+        for enemy_ship in opp_fleet.ships:
+            if enemy_ship.node:
+                dist = abs(ship.node.x - enemy_ship.node.x) + abs(
+                    ship.node.y - enemy_ship.node.y
+                )
+                if dist < closest_enemy_dist:
+                    closest_enemy_dist = dist
+                    closest_enemy_energy = enemy_ship.energy
+
+                enemy_centroid_x += enemy_ship.node.x
+                enemy_centroid_y += enemy_ship.node.y
+                num_visible_enemies += 1
+                total_enemy_energy += enemy_ship.energy
+
+        if num_visible_enemies > 0:
+            enemy_centroid_x /= num_visible_enemies
+            enemy_centroid_y /= num_visible_enemies
+            avg_enemy_energy = total_enemy_energy / num_visible_enemies
+        else:
+            enemy_centroid_x = Global.SPACE_SIZE / 2
+            enemy_centroid_y = Global.SPACE_SIZE / 2
+            avg_enemy_energy = 0
+
+        # Add enemy features
+        features.extend(
+            [
+                closest_enemy_dist
+                / Global.SPACE_SIZE,  # Normalized distance to closest enemy
+                closest_enemy_energy / 100.0,  # Normalized energy of closest enemy
+                enemy_centroid_x
+                / Global.SPACE_SIZE,  # Normalized enemy centroid position
+                enemy_centroid_y / Global.SPACE_SIZE,
+                num_visible_enemies
+                / Global.MAX_UNITS,  # Normalized count of visible enemies
+                avg_enemy_energy / 100.0,  # Normalized average enemy energy
+                total_enemy_energy
+                / (100.0 * Global.MAX_UNITS),  # Normalized total enemy energy
+            ]
+        )
+
+        # Local environment features with enemy presence
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
                 x, y = ship.node.x + dx, ship.node.y + dy
                 if 0 <= x < Global.SPACE_SIZE and 0 <= y < Global.SPACE_SIZE:
                     node = space.get_node(x, y)
+                    # Check for enemy presence in this cell
+                    enemy_present = any(
+                        enemy.node and enemy.node.x == x and enemy.node.y == y
+                        for enemy in opp_fleet.ships
+                    )
+                    enemy_energy = sum(
+                        enemy.energy
+                        for enemy in opp_fleet.ships
+                        if enemy.node and enemy.node.x == x and enemy.node.y == y
+                    )
+
                     features.extend(
                         [
                             1.0 if node.type == NodeType.asteroid else 0.0,
                             1.0 if node.relic else 0.0,
                             1.0 if node.reward else 0.0,
                             node.energy / 100.0 if node.energy is not None else 0.0,
+                            1.0 if enemy_present else 0.0,  # Enemy presence indicator
+                            enemy_energy / 100.0,  # Normalized enemy energy in cell
                         ]
                     )
                 else:
-                    features.extend([0.0, 0.0, 0.0, 0.0])
+                    features.extend([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         return np.array(features, dtype=np.float32)
 
-    def select_action(self, state):
-        if random.random() > self.epsilon:
-            with torch.no_grad():
-                state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-                self.policy_net.eval()
-                q_values = self.policy_net(state)
-                self.policy_net.train()
-                return q_values.argmax().item()
-        else:
-            return random.randrange(self.action_size)
-
-    def train(self, state_dict, action, reward, next_state_dict, done):
-        """Train the model on a single step of experience."""
+    def train(
+        self,
+        state_dict,
+        action,
+        reward,
+        next_state_dict,
+        done,
+        valid_actions_mask=None,
+        next_valid_actions_mask=None,
+    ):
+        """Train the model on a single step of experience using Double DQN."""
         # Convert states to tensors
         state = self.encode_state(state_dict)
         next_state = self.encode_state(next_state_dict)
@@ -375,22 +537,50 @@ class DQNAgent(nn.Module):
         reward = torch.tensor([reward], device=self.device, dtype=torch.float32)
         done = torch.tensor([done], device=self.device, dtype=torch.float32)
 
-        # Get current Q values
-        current_q_values = self(state)
-        current_q_value = current_q_values.gather(1, action.unsqueeze(-1))
-
-        # Compute target Q values
-        with torch.no_grad():
-            # Get next state values using target network
-            next_features = self.target_feature_net(next_state)
-            next_advantage = self.target_advantage_net(next_features)
-            next_value = self.target_value_net(next_features)
-            next_q_values = next_value + (
-                next_advantage - next_advantage.mean(dim=1, keepdim=True)
+        if valid_actions_mask is not None:
+            valid_actions_mask = torch.tensor(valid_actions_mask, device=self.device)
+        if next_valid_actions_mask is not None:
+            next_valid_actions_mask = torch.tensor(
+                next_valid_actions_mask, device=self.device
             )
 
-            # Get max Q value for next state
-            next_q_value = next_q_values.max(1)[0].unsqueeze(1)
+        # Get current Q values
+        current_q_values = self(state, valid_actions_mask)
+        current_q_value = current_q_values.gather(1, action.unsqueeze(-1))
+
+        # Compute target Q values using Double DQN
+        with torch.no_grad():
+            # Get next action using online network
+            next_features_online = self.feature_net(next_state)
+            next_advantage_online = self.advantage_net(next_features_online)
+            next_value_online = self.value_net(next_features_online)
+            next_q_values_online = next_value_online + (
+                next_advantage_online - next_advantage_online.mean(dim=1, keepdim=True)
+            )
+
+            if next_valid_actions_mask is not None:
+                next_q_values_online = next_q_values_online.masked_fill(
+                    ~next_valid_actions_mask, float("-inf")
+                )
+
+            # Get best action from online network
+            next_action = next_q_values_online.argmax(1, keepdim=True)
+
+            # Get Q values from target network
+            next_features_target = self.target_feature_net(next_state)
+            next_advantage_target = self.target_advantage_net(next_features_target)
+            next_value_target = self.target_value_net(next_features_target)
+            next_q_values_target = next_value_target + (
+                next_advantage_target - next_advantage_target.mean(dim=1, keepdim=True)
+            )
+
+            if next_valid_actions_mask is not None:
+                next_q_values_target = next_q_values_target.masked_fill(
+                    ~next_valid_actions_mask, float("-inf")
+                )
+
+            # Use Q-value of best action from target network
+            next_q_value = next_q_values_target.gather(1, next_action)
 
             # Compute target Q value using Bellman equation
             target_q_value = (
@@ -450,10 +640,10 @@ class DQNAgent(nn.Module):
             path (str): Path to save the model
         """
         # Create directory if it doesn't exist
-        try:
-            os.makedirs(os.path.dirname(path))
-        except Exception as e:
-            print(f"Error creating directory: {e}", file=stderr)
+        directory = os.path.dirname(path)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory)
+
         # Save all network states
         torch.save(
             {

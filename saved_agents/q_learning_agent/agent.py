@@ -18,7 +18,7 @@ from base import (
 )
 from debug import show_energy_field, show_exploration_map, show_map
 from pathfinding import (
-    astar,
+    dstar,
     create_weights,
     estimate_energy_cost,
     find_closest_target,
@@ -57,7 +57,9 @@ class Node:
         return self.coordinates.__hash__()
 
     def __eq__(self, other):
-        return self.x == other.x and self.y == other.y
+        if not isinstance(other, Node):
+            return False
+        return self.x == other.x and self.y == other.y and self.type == other.type
 
     @property
     def relic(self):
@@ -237,43 +239,61 @@ class Space:
             self._update_reward_status_from_reward_results()
 
     def _update_reward_status_from_reward_results(self):
-        # We will use Global.REWARD_RESULTS to identify which nodes yield points
+        """Update reward status based on Global.REWARD_RESULTS"""
         for result in Global.REWARD_RESULTS:
-            unknown_nodes = set()
-            known_reward = 0
-            for n in result["nodes"]:
-                if n.explored_for_reward and not n.reward:
-                    continue
-
-                if n.reward:
-                    known_reward += 1
-                    continue
-
-                unknown_nodes.add(n)
-
-            if not unknown_nodes:
-                # all nodes already explored, nothing to do here
+            if (
+                not isinstance(result, dict)
+                or "nodes" not in result
+                or "reward" not in result
+            ):
                 continue
 
-            reward = result["reward"] - known_reward  # reward from unknown_nodes
+            nodes = result["nodes"]
+            if not isinstance(nodes, (set, list)):
+                continue
 
+            # Get the reference nodes from our space
+            space_nodes = set()
+            for n in nodes:
+                if not isinstance(n, Node):
+                    continue
+                space_node = self.get_node(n.x, n.y)
+                if space_node:
+                    space_nodes.add(space_node)
+
+            if not space_nodes:
+                continue  # No valid nodes found
+
+            # Count known rewards
+            known_reward = sum(1 for n in space_nodes if n.reward)
+
+            # Get unknown nodes
+            unknown_nodes = {
+                n
+                for n in space_nodes
+                if not n.explored_for_reward or (n.explored_for_reward and not n.reward)
+            }
+
+            if not unknown_nodes:
+                continue  # All nodes already explored
+
+            try:
+                reward = float(result["reward"]) - known_reward
+            except (TypeError, ValueError):
+                continue
+
+            if reward < 0 or not isinstance(reward, (int, float)):
+                continue
+
+            # Update node statuses
             if reward == 0:
-                # all nodes are empty
+                # All nodes are empty
                 for node in unknown_nodes:
-                    self._update_reward_status(*node.coordinates, status=False)
-
+                    self._update_reward_status(node.x, node.y, False)
             elif reward == len(unknown_nodes):
-                # all nodes yield points
+                # All nodes yield points
                 for node in unknown_nodes:
-                    self._update_reward_status(*node.coordinates, status=True)
-
-            elif reward > len(unknown_nodes):
-                # we shouldn't be here
-                print(
-                    f"Something wrong with reward result: {result}"
-                    ", this result will be ignored.",
-                    file=stderr,
-                )
+                    self._update_reward_status(node.x, node.y, True)
 
     def _update_reward_results(self, obs, team_id, team_reward):
         ship_nodes = set()
@@ -576,6 +596,7 @@ class Fleet:
             ship.clean()
 
     def update(self, obs, space: Space, opp_fleet):
+        """Update fleet state based on observations."""
         self.points = int(obs["team_points"][self.team_id])
 
         for ship, active, position, energy in zip(
@@ -585,14 +606,12 @@ class Fleet:
             obs["units"]["energy"][self.team_id],
         ):
             if active:
+                ship.energy = energy
                 ship.node = space.get_node(*position)
-                if ship.starting_position is None:
-                    ship.starting_position = space.get_node(*position)
-                ship.energy = int(energy)
-                ship.action = None
-                ship.update_sap_targets(opp_fleet)
             else:
                 ship.clean()
+
+            ship.update_sap_targets(opp_fleet)
 
 
 class Agent:
@@ -892,6 +911,11 @@ class Agent:
             self.load_model()
             self.prev_state = {}
             self.prev_action = {}
+            return self.create_actions_array()
+
+        points = int(obs["team_points"][self.team_id])
+        # how many points did we score in the last step
+        reward = max(0, points - self.fleet.points)
 
         # Update game state
         self.space.update(step, obs, self.team_id, self.fleet.points)
@@ -957,7 +981,7 @@ class Agent:
 
             # Store transition in replay buffer if we have previous state
             if ship.unit_id in self.prev_state and ship.unit_id in self.prev_action:
-                reward = self._calculate_reward(ship, action_type)
+                reward = self._calculate_reward(ship, action_type, reward)
                 self.dqn_agent.train(
                     self.prev_state[ship.unit_id],
                     self.prev_action[ship.unit_id],
@@ -972,9 +996,9 @@ class Agent:
 
         return actions
 
-    def _calculate_reward(self, ship, action):
+    def _calculate_reward(self, ship, action, reward=0):
         """Calculate reward for the given ship and action"""
-        reward = 0
+        reward = reward / 16
 
         # Reward for gaining points
         if ship.node and ship.node.reward:
@@ -1053,7 +1077,7 @@ class Agent:
             if not target:
                 return False
 
-            path = astar(create_weights(self.space), ship.coordinates, target)
+            path = dstar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
             if actions and ship.energy >= energy:
@@ -1146,7 +1170,7 @@ class Agent:
             if not target:
                 return
 
-            path = astar(create_weights(self.space), ship.coordinates, target)
+            path = dstar(create_weights(self.space), ship.coordinates, target)
             energy = estimate_energy_cost(self.space, path)
             actions = path_to_actions(path)
 
@@ -1199,7 +1223,7 @@ class Agent:
                 ship.action = ActionType.center
                 return True
 
-            path = astar(
+            path = dstar(
                 create_weights(self.space),
                 start=ship.coordinates,
                 goal=target_node.coordinates,
@@ -1251,7 +1275,8 @@ class Agent:
         """Save the DQN model"""
         try:
             model_dir = os.path.join(os.path.dirname(__file__), "models")
-            os.makedirs(model_dir, exist_ok=True)
+            if not os.path.exists(model_dir):
+                os.makedirs(model_dir)
             model_path = os.path.join(model_dir, "dqn_agent.pth")
             self.dqn_agent.save(model_path)
         except Exception as e:

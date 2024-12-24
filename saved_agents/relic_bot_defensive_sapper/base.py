@@ -1,10 +1,9 @@
-from enum import IntEnum
 
-import numpy as np
-from gymnasium.spaces import Box, Dict, MultiBinary
+from enum import IntEnum
 
 
 class Global:
+
     # Game related constants:
 
     SPACE_SIZE = 24
@@ -55,77 +54,6 @@ class Global:
 
 
 SPACE_SIZE = Global.SPACE_SIZE
-
-
-OBSERVATION_SPACE = Dict(
-    {
-        "units": Dict(
-            {
-                "position": Box(
-                    low=np.int16(-1),
-                    high=np.int16(Global.SPACE_SIZE - 1),
-                    shape=(2, 16, 2),
-                    dtype=np.int16,
-                ),
-                "energy": Box(
-                    low=np.int16(-1),
-                    high=np.int16(1000),
-                    shape=(2, 16),
-                    dtype=np.int16,
-                ),
-            }
-        ),
-        "units_mask": MultiBinary((2, 16)),
-        "sensor_mask": MultiBinary((24, 24)),
-        "map_features": Dict(
-            {
-                "energy": Box(
-                    low=np.int16(-Global.MAX_ENERGY_PER_TILE),
-                    high=np.int16(Global.MAX_ENERGY_PER_TILE),
-                    shape=(24, 24),
-                    dtype=np.int16,
-                ),
-                "tile_type": Box(
-                    low=np.int16(-1),
-                    high=np.int16(2),
-                    shape=(24, 24),
-                    dtype=np.int16,
-                ),
-            }
-        ),
-        "relic_nodes": Box(
-            low=np.int16(-1),
-            high=np.int16(Global.SPACE_SIZE - 1),
-            shape=(6, 2),
-            dtype=np.int16,
-        ),
-        "relic_nodes_mask": MultiBinary(6),
-        "team_points": Box(
-            low=np.int32(0),
-            high=np.iinfo(np.int32).max,
-            shape=(2,),
-            dtype=np.int32,
-        ),
-        "team_wins": Box(
-            low=np.int32(0),
-            high=np.int32(5),
-            shape=(2,),
-            dtype=np.int32,
-        ),
-        "steps": Box(
-            low=np.int32(0),
-            high=np.int32(Global.MAX_STEPS_IN_MATCH),
-            shape=(),
-            dtype=np.int32,
-        ),
-        "match_steps": Box(
-            low=np.int32(0),
-            high=np.int32((Global.MAX_STEPS_IN_MATCH + 1) * 5),
-            shape=(),
-            dtype=np.int32,
-        ),
-    }
-)
 
 
 class NodeType(IntEnum):

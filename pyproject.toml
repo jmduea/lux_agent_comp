@@ -14,5 +14,12 @@ dependencies = [
     "seaborn>=0.13.2",
     "tensorboardx>=2.6.2.2",
     "gymnasium>=1.0.0",
-    "ray[all]>=2.40.0",
+    "ray[all,rllib]>=2.40.0",
+    "kaggle>=1.6.17",
+    "bs4>=0.0.2",
+    "selenium>=4.27.1",
+    "webdriver-manager>=4.0.2",
+    "pygame>=2.6.1",
+    "stable-baselines3[extra]>=1.2.0",
+    "tensorboard>=2.18.0",
 ]
