@@ -11,7 +11,7 @@
     "editor.bracketPairColorization.enabled": false,
     "editor.cursorSmoothCaretAnimation": "on",
     "editor.suggest.preview": true,
-    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
     "debug.onTaskErrors": "debugAnyway",
     "explorer.compactFolders": false,
     "explorer.confirmDragAndDrop": false,
@@ -153,5 +153,8 @@
     "notebook.compactView": false,
     "notebook.diff.ignoreMetadata": true,
     "notebook.diff.ignoreOutputs": true,
-    "python.REPL.enableREPLSmartSend": false
+    "python.REPL.enableREPLSmartSend": false,
+    "[html]": {
+        "editor.defaultFormatter": "vscode.html-language-features"
+    }
 }
