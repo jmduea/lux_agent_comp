@@ -2,9 +2,10 @@ import copy
 from sys import stderr
 
 import numpy as np
+from jax.tree_util import register_pytree_node_class
 from scipy.signal import convolve2d
 
-from base import (
+from .base import (
     SPACE_SIZE,
     ActionType,
     Global,
@@ -14,8 +15,7 @@ from base import (
     is_team_sector,
     warp_point,
 )
-from debug import show_energy_field, show_exploration_map, show_map
-
+from .debug import show_energy_field, show_exploration_map, show_map
 from .pathfinding import (
     astar,
     create_weights,
@@ -27,18 +27,19 @@ from .pathfinding import (
 )
 
 
+@register_pytree_node_class
 class Node:
-    def __init__(self, x, y):
+    def __init__(self, x: int, y: int):
         self.x = x
         self.y = y
-        self.type = NodeType.unknown
-        self.energy = None
-        self.is_visible = False
+        self.type: NodeType = NodeType.unknown
+        self.energy: int = None
+        self.is_visible: bool = False
 
-        self._relic = False
-        self._reward = False
-        self._explored_for_relic = False
-        self._explored_for_reward = False
+        self._relic: bool = False
+        self._reward: bool = False
+        self._explored_for_relic: bool = False
+        self._explored_for_reward: bool = False
 
     def __repr__(self):
         return f"Node({self.x}, {self.y}, {self.type})"
@@ -100,7 +101,27 @@ class Node:
     def manhattan_distance(self, other: "Node") -> int:
         return abs(self.x - other.x) + abs(self.y - other.y)
 
+    def tree_flatten(self):
+        children = (
+            self.x,
+            self.y,
+            self.type,
+            self.energy,
+            self.is_visible,
+            self._relic,
+            self._reward,
+            self._explored_for_relic,
+            self._explored_for_reward,
+        )
+        aux_data = None
+        return (children, aux_data)
 
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(*children, **aux_data)
+
+
+@register_pytree_node_class
 class Space:
     def __init__(self):
         self._nodes: list[list[Node]] = []
@@ -120,6 +141,17 @@ class Space:
     def __iter__(self):
         for row in self._nodes:
             yield from row
+
+    def tree_flatten(self):
+        children = (self._nodes, self._relic_nodes, self._reward_nodes)
+        aux_data = None
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        space = cls()
+        space._nodes, space._relic_nodes, space._reward_nodes = children
+        return space
 
     @property
     def relic_nodes(self) -> set[Node]:
@@ -811,4 +843,5 @@ class Agent:
 
     def show_exploration_map(self):
         print("Exploration map:", file=stderr)
+        show_exploration_map(self.space)
         show_exploration_map(self.space)

@@ -1,8 +1,8 @@
-
 import heapq
+
 import numpy as np
 
-from base import SPACE_SIZE, NodeType, Global, ActionType
+from .base import SPACE_SIZE, ActionType, Global, NodeType
 
 CARDINAL_DIRECTIONS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
@@ -88,7 +88,6 @@ def create_weights(space):
 
     weights = np.zeros((SPACE_SIZE, SPACE_SIZE), np.float32)
     for node in space:
-
         if not node.is_walkable:
             weight = -1
         else:

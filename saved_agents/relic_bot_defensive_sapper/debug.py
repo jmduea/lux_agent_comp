@@ -1,15 +1,13 @@
-
 from sys import stderr
 from collections import defaultdict
 
-from base import Global, NodeType
+from .base import Global, NodeType
 
 
 def show_energy_field(space, only_visible=True):
     line = " + " + " ".join([f"{x:>2}" for x in range(Global.SPACE_SIZE)]) + "  +\n"
     str_grid = line
     for y in range(Global.SPACE_SIZE):
-
         str_row = []
 
         for x in range(Global.SPACE_SIZE):
@@ -46,7 +44,6 @@ def show_map(space, fleet=None, only_visible=True):
     line = " + " + " ".join([f"{x:>2}" for x in range(Global.SPACE_SIZE)]) + "  +\n"
     str_grid = line
     for y in range(Global.SPACE_SIZE):
-
         str_row = []
 
         for x in range(Global.SPACE_SIZE):
@@ -96,7 +93,6 @@ def show_exploration_map(space):
     line = " + " + " ".join([f"{x:>2}" for x in range(Global.SPACE_SIZE)]) + "  +\n"
     str_grid = line
     for y in range(Global.SPACE_SIZE):
-
         str_row = []
 
         for x in range(Global.SPACE_SIZE):

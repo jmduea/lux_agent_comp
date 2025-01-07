@@ -4,7 +4,7 @@ from sys import stderr
 import numpy as np
 from scipy.signal import convolve2d
 
-from base import (
+from .base import (
     SPACE_SIZE,
     ActionType,
     Global,
@@ -14,7 +14,7 @@ from base import (
     is_team_sector,
     warp_point,
 )
-from debug import show_energy_field, show_exploration_map, show_map
+from .debug import show_energy_field, show_exploration_map, show_map
 
 from .pathfinding import (
     astar,

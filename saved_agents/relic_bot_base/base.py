@@ -1,9 +1,7 @@
-
 from enum import IntEnum
 
 
 class Global:
-
     # Game related constants:
 
     SPACE_SIZE = 24
@@ -113,8 +111,15 @@ class ActionType(IntEnum):
         return _DIRECTIONS[self]
 
 
-def get_match_step(step: int) -> int:
-    return step % (Global.MAX_STEPS_IN_MATCH + 1)
+class TaskType(IntEnum):
+    explore_reward = 0
+    explore_relic = 1
+    collect_energy = 2
+
+
+def get_match_step(step):
+    """Get the step number within the current match"""
+    return step % Global.MAX_STEPS_IN_MATCH
 
 
 def warp_int(x):
