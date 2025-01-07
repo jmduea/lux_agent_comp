@@ -1,7 +1,7 @@
 [project]
 name = "lux-agent-comp"
 version = "0.1.0"
-description = "Add your description here"
+description = "Lux AI Challenge Season 3"
 readme = "README.md"
 requires-python = ">= 3.10"
 authors = [{ name = "Jon Duea", email = "jdueadev@gmail.com" }]
@@ -17,9 +17,22 @@ dependencies = [
     "ray[all,rllib]>=2.40.0",
     "kaggle>=1.6.17",
     "bs4>=0.0.2",
-    "selenium>=4.27.1",
-    "webdriver-manager>=4.0.2",
     "pygame>=2.6.1",
     "stable-baselines3[extra]>=1.2.0",
     "tensorboard>=2.18.0",
+    "wandb>=0.19.1",
+    "openrl>=0.2.0",
+    "pettingzoo>=1.24.3",
+    "flashbax>=0.1.2",
+    "distrax>=0.1.5",
+    "jax>=0.4.38",
+    "jaxlib>=0.4.38",
+    "jax-dataclasses>=1.6.1",
+    "plotly>=5.24.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=6.0.0",
+    "pytest>=8.3.4",
 ]

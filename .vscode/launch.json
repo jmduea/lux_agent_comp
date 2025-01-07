@@ -1,52 +1,21 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "PyDebug: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": true
-        },
-        {
-            "name": "PyDebug: Main File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/main.py",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": true
-        },
-        {
-            "name": "Evaluate Agents",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/evaluate_agents.py",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": true,
-            "logToFile": true
-        },
-        {
-<<<<<<< HEAD
-            "name": "Evaluate DQN Agents",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/evaluate_dqn_agents.py",
-            "console": "integratedTerminal",
-            "args": [],
-            "justMyCode": true,
-            "logToFile": true
-        },
-        {
-=======
->>>>>>> parent of ad09784 (Delete .vscode directory)
-            "name": "Python Debugger: Python File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}"
-        }
-    ]
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "pdb: core.debug",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "core.debug"
+    },
+    {
+      "name": "Python Debugger: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal"
+    }
+  ]
 }
