@@ -1,12 +1,17 @@
-
 import json
+import os
+import sys
 from argparse import Namespace
+
 from agent import Agent
+
+# from lux.config import EnvConfig
 from lux.kit import from_json
 
 ### DO NOT REMOVE THE FOLLOWING CODE ###
-# store potentially multiple dictionaries as kaggle imports code directly
-agent_dict = dict()
+agent_dict = (
+    dict()
+)  # store potentially multiple dictionaries as kaggle imports code directly
 agent_prev_obs = dict()
 
 
@@ -23,6 +28,13 @@ def agent_fn(observation, configurations):
     remainingOverageTime = observation.remainingOverageTime
     if step == 0:
         agent_dict[player] = Agent(player, configurations["env_cfg"])
+    if "__raw_path__" in configurations:
+        dirname = os.path.dirname(configurations["__raw_path__"])
+    else:
+        dirname = os.path.dirname(__file__)
+
+    sys.path.append(os.path.abspath(dirname))
+
     agent = agent_dict[player]
     actions = agent.act(step, from_json(obs), remainingOverageTime)
     return dict(action=actions.tolist())
