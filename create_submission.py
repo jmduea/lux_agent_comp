@@ -1,7 +1,6 @@
 import os
 import shutil
 import tarfile
-import sys
 from datetime import datetime
 
 
@@ -17,26 +16,29 @@ def create_submission_package(project_dir, output_filename="submission.tar.gz"):
     essential_files = [
         "agent.py",
         "main.py",
-        "base.py",
-        "debug.py",
-        "pathfinding.py",
+        "core",
         "lux",  # Include the entire lux directory
         "__pycache__",  # Include the __pycache__ directory
     ]
-
-    # Create a temporary submission directory
-    submission_dir = os.path.join(project_dir, "submission_temp")
-    os.makedirs(submission_dir, exist_ok=True)
 
     # Create submissions directory if it doesn't exist
     submissions_dir = os.path.join(project_dir, "submissions")
     os.makedirs(submissions_dir, exist_ok=True)
 
+    # Create timestamped folder
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    submission_folder = os.path.join(submissions_dir, timestamp)
+    os.makedirs(submission_folder, exist_ok=True)
+
+    # Create temp working directory
+    temp_dir = os.path.join(project_dir, "submission_temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
     try:
         # Copy essential files
         for item in essential_files:
             src_path = os.path.join(project_dir, item)
-            dst_path = os.path.join(submission_dir, item)
+            dst_path = os.path.join(temp_dir, item)
 
             if os.path.isdir(src_path):
                 shutil.copytree(src_path, dst_path)
@@ -44,20 +46,30 @@ def create_submission_package(project_dir, output_filename="submission.tar.gz"):
                 shutil.copy2(src_path, dst_path)
 
         # Create tar.gz archive with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename_with_timestamp = f"{os.path.splitext(output_filename)[0]}_{timestamp}.tar.gz"
+        output_filename_with_timestamp = (
+            f"{os.path.splitext(output_filename)[0]}_{timestamp}.tar.gz"
+        )
         output_path = os.path.join(submissions_dir, output_filename_with_timestamp)
         with tarfile.open(output_path, "w:gz") as tar:
-            tar.add(submission_dir, arcname=".")
+            tar.add(temp_dir, arcname=".")
 
-        print(f"Submission package created: {output_path}")
+        with open(os.path.join(submission_folder, "metadata.txt"), "w") as f:
+            f.write(f"Submission created: {datetime.now().isoformat()}\n")
+            f.write(f"Package Name: {output_filename_with_timestamp}\n")
+
+        print(f"Submission package created in: {submission_folder}")
+        print(f"Archive file: {output_filename_with_timestamp}")
 
     except Exception as e:
         print(f"Error creating submission package: {e}")
+        if os.path.exists(submission_folder):
+            shutil.rmtree(submission_folder)
+        raise
 
     finally:
         # Clean up temporary directory
-        shutil.rmtree(submission_dir, ignore_errors=True)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
