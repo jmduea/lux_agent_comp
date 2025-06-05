@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue)
 
-FILL OUT THIS README!
+Repository for my work/submissions to the Kaggle lux-ai S3 Competition
 
 ## Sources
 
