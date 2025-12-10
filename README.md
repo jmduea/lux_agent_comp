@@ -211,7 +211,7 @@ This is a personal competition project, but feedback and suggestions are welcome
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is open source and available for educational and portfolio purposes.
 
 ## 🙏 Acknowledgments
 
